@@ -1,0 +1,55 @@
+name: seal-build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '12.18.1'
+
+      - name: Use the release-date registry
+        run: |
+          npm config set registry https://:2020-06-18T22%3A00%3A56.144Z@time-machines-npm.sealsecurity.io/
+          node -v
+          npm -v
+
+      - name: Install the pinned devDependencies
+        run: npm install
+
+      - name: Rebuild every bundle from src
+        # `grunt release` without its lint/test steps (Travis runs the tests): transpile builds build/umd and
+        # build/esm from src, update-index copies them over moment.js, locale/, min/locales.js,
+        # min/moment-with-locales.js and dist/, uglify:main regenerates min/*.min.js.
+        run: ./node_modules/.bin/grunt transpile update-index uglify:main
+
+      - name: Stage the npm package with scripts/npm_prepublish.sh
+        run: bash scripts/npm_prepublish.sh
+
+      - name: Pack
+        run: |
+          npm pack ./output_build/
+          mkdir -p seal-dist
+          mv moment-*.tgz seal-dist/
+          ls -l seal-dist
+
+      - name: Check every shipped bundle rejects crafted locale names (CVE-2026-17495)
+        run: |
+          work=$(mktemp -d)
+          tar -xzf seal-dist/moment-*.tgz -C "$work"
+          node .github/seal-verify-locale.js "$work/package"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moment-npm-tgz
+          path: seal-dist/moment-*.tgz
+          if-no-files-found: error
